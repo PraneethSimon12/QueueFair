@@ -10,17 +10,46 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_dotenv(path: Path) -> None:
+    """Seed os.environ from a KEY=VALUE .env file, if present.
+
+    Deliberately hand-rolled (Rule 5) instead of adding python-dotenv: it is ~10 lines, keeps
+    the mechanism visible (there is no magic — .env just fills os.environ), and adds no
+    dependency. Real environment variables win: we use setdefault(), so anything already
+    exported in the shell is never overwritten by the file. Values are read verbatim — no
+    quote-stripping — so don't wrap values in quotes in .env.
+    """
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+# Load booking_service/.env (gitignored) before any setting reads os.environ.
+_load_dotenv(BASE_DIR / ".env")
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-ju=9+ua^ks1l(ep79&+i%-kye5vfc$sg1ntszcn2ni%h2i7v_i'
+# Read from the environment; the insecure literal remains only as a dev fallback so the app
+# still boots without a .env. Set DJANGO_SECRET_KEY to a real random value for anything real.
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-ju=9+ua^ks1l(ep79&+i%-kye5vfc$sg1ntszcn2ni%h2i7v_i",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -78,9 +107,13 @@ WSGI_APPLICATION = 'booking_service.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DB_NAME", "queuefair"),
+        "USER": os.environ.get("DB_USER", "queuefair"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", ""),  # no committed default; comes from .env
+        "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("DB_PORT", "5433"),
     }
 }
 
