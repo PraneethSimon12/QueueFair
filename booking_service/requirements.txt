@@ -1,0 +1,6 @@
+# Booking service — Django + DRF. Python 3.12+.
+# Direct dependencies only. Transitive deps (asgiref, sqlparse, tzdata) are resolved by pip.
+# If we ever need fully reproducible transitive pins, add pip-tools and a lock file — not
+# needed at v0.
+Django==5.1.15
+djangorestframework==3.16.1
