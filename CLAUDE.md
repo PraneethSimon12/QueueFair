@@ -164,17 +164,36 @@ Never let me put a number on my resume that we have not reproduced on a real run
 
 **Rule 8 — Keep the decision log current**
 There is a `docs/decisions.md` file. Every non-obvious choice gets ~5 lines: what we chose,
-what we rejected, why, and what would make us revisit. Append to it as we go. This file becomes
+what we rejected, why, and what would make us revisit. Append to it as we go — **automatically,
+without being asked; this is a default, not something I wait to be told to do.** Every
+architecture decision and every deliberate exception to a principle goes here. This file becomes
 the design doc, which is worth more in interviews than another thousand lines of code.
 
 **Rule 9 — Check my understanding, honestly**
+
+**The standard for every line we write: assume a senior Google technical lead is reading this
+project line by line, and will stop at any single line to ask "why is this here, why this way,
+and what breaks if it changes?" If a line cannot survive that question, it is not finished.**
+This lens governs everything — every import, every default, every constraint, every config
+value — not just the check below. When you write a line whose justification is non-obvious, say
+the justification out loud as you write it.
+
 At the end of a meaningful chunk of work, ask me one or two real questions about what we just
-built — the kind an interviewer would ask. "Why does the Lua script need to be atomic here, and
+built — the kind that senior lead would ask. "Why does the Lua script need to be atomic here, and
 what specifically breaks if it isn't?"
 
 If my answer is wrong or hand-wavy, tell me plainly and re-explain. Do not be encouraging about
 a wrong answer. Getting corrected here is exactly the point; getting flattered here costs me an
 offer later.
+
+**Document every Q&A automatically — this is a default, I never have to ask for it.** Every
+understanding-check question, together with its model answer (and a note if I got it wrong), is
+appended to `docs/interview-prep.md` so it becomes pre-interview study material. This also
+covers any substantial concept explanation that comes up in conversation — e.g. "why `.env` vs
+`.env.example`" — not only the formal end-of-chunk questions. Split of responsibility:
+architecture decisions and deliberate exceptions → `docs/decisions.md` (Rule 8); interview
+questions and concept explanations → `docs/interview-prep.md`. A topic that fits both may be
+logged in both, briefly.
 
 **Rule 10 — Small steps, working software**
 Every change should leave the system runnable. Prefer five small commits over one large one. If
@@ -232,6 +251,7 @@ queuefair/
 └── docs/
     ├── design.md             # the RFC-style design doc
     ├── decisions.md          # the running decision log
+    ├── interview-prep.md     # auto-logged Q&A + concept explanations, for interview study
     └── loadtest-report.md
 ```
 
