@@ -158,3 +158,11 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# --- QueueFair: admission tokens --------------------------------------------------------------
+# Shared HS256 secret used to VERIFY admission tokens minted by the queue service; it must match
+# the queue service's signing secret. Required, with NO fallback default: a signing secret with a
+# guessable default would let anyone forge admission tokens, so a missing value must crash the app
+# loudly rather than silently accept forgeries.
+ADMISSION_TOKEN_SECRET = os.environ["ADMISSION_TOKEN_SECRET"]

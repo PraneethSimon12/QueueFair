@@ -5,3 +5,4 @@
 Django==5.1.15
 djangorestframework==3.16.1
 psycopg[binary]==3.3.4
+PyJWT==2.13.0
