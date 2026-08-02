@@ -1,0 +1,18 @@
+# Queue service — async Django on ASGI, Redis only, no database. Python 3.12+.
+# Direct dependencies only; transitive deps (asgiref, sqlparse, tzdata, h11, httptools, ...) are
+# resolved by pip.
+Django==5.1.15
+redis==6.4.0
+uvicorn[standard]==0.52.1
+
+# Signs the HS256 admission passes the booking service verifies. Pinned to the SAME version the
+# booking service uses: the two are opposite ends of one credential, and a version skew in a JWT
+# library is exactly the kind of thing that fails silently on one side only.
+PyJWT==2.13.0
+
+# Deliberately NOT here yet:
+#   gunicorn  — POSIX only (it imports fcntl), so it cannot run on the Windows dev box. Locally
+#               we run a single Uvicorn process; the Gunicorn + UvicornWorker setup arrives with
+#               Docker in Phase 12, which is the first time this service runs on Linux.
+#   uvloop    — same reason; uvicorn[standard] already skips it on win32 via a platform marker,
+#               and picks it up automatically inside the Linux image.
