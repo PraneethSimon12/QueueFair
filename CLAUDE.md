@@ -31,7 +31,7 @@ Two services:
 
 | Service | Role | Stack |
 | --- | --- | --- |
-| **Queue service** | Holds the crowd. Long-lived SSE connections, queue position, admission control. This is the interesting part. | FastAPI + Redis |
+| **Queue service** | Holds the crowd. Long-lived SSE connections, queue position, admission control. This is the interesting part. | async Django (ASGI) + Redis |
 | **Booking service** | The thing being protected. Deliberately slow and boring. Validates admission tokens, "books" a ticket. | Django + DRF + PostgreSQL |
 
 The booking service is a mock. It sleeps ~100ms and returns success. Do not build seat
@@ -51,9 +51,14 @@ something has gone wrong.
 
 ## 2. Tech stack
 
-**Queue service:** FastAPI, Uvicorn with uvloop + httptools, Gunicorn (UvicornWorker, 4–6
-workers), redis.asyncio (redis-py ≥5), PyJWT (HS256), Pydantic v2, prometheus-client
-(multiprocess mode), pytest + pytest-asyncio, ruff, mypy, py-spy for profiling.
+**Queue service:** **async Django 5 (ASGI)** — bare async views, no DRF on the hot path —
+Uvicorn with uvloop + httptools, Gunicorn (UvicornWorker, 4–6 workers), redis.asyncio
+(redis-py ≥5), PyJWT (HS256), prometheus-client (multiprocess mode), pytest +
+pytest-asyncio, ruff, mypy, py-spy for profiling.
+
+The queue service **never touches a database.** Its entire state is in Redis. `DATABASES` is
+empty and the ORM is never imported — see `docs/decisions.md` (2026-08-02, Django ASGI) for
+why that is a design constraint and not an accident.
 
 **Booking service:** Django 5, DRF, PostgreSQL 16.
 
@@ -68,6 +73,14 @@ I must be able to defend: the bottleneck is Redis round-trips and the booking se
 queue process; asyncio handles the IO fine at our scale; multi-process workers cover what the
 GIL does not; and we will have measurements showing exactly where it falls over. If you think a
 specific hot path genuinely needs Go, say so with numbers, but the default is Python.
+
+**Framework decision (2026-08-02 — supersedes the original FastAPI line above):** the queue
+service is **async Django on ASGI**, not FastAPI. What I must be able to defend: one framework
+across both services means one mental model, one settings idiom, one test runner; Django's async
+view + `StreamingHttpResponse` is enough for SSE; and the framework is not the bottleneck — Redis
+round-trips and per-connection memory are. What I am giving up, and must say out loud rather than
+hide: Django carries more per-request overhead than Starlette, and its sync/async middleware
+adaptation is a live footgun (§8). Full entry in `docs/decisions.md`.
 
 ---
 
@@ -222,8 +235,9 @@ me. Agreeing with me is not helping me.
 - Structured logging (JSON), never bare `print`. Every log line in the queue path carries
   `event_id` and `user_id`.
 - No bare `except:`. Catch specific exceptions and say why.
-- Configuration via environment variables, parsed once into a Pydantic Settings object. No
-  magic constants scattered through the code.
+- Configuration via environment variables, read once in each service's `settings.py`. No magic
+  constants scattered through the code. (Both services are Django now, so both use Django's own
+  settings mechanism — see `docs/decisions.md`, 2026-07-18, "Django-native settings".)
 - Tests: unit tests must run without Redis (that's what the repository interface is for).
   Integration tests use a real Redis in Docker.
 - Every Lua script lives in its own `.lua` file with a header comment explaining, in English,
@@ -238,24 +252,36 @@ queuefair/
 ├── CLAUDE.md
 ├── docker-compose.yml
 ├── Makefile                  # make up / make down / make test / make load
-├── queue_service/            # FastAPI
-│   ├── api/                  # routes, SSE endpoint
+├── queue_service/            # async Django (ASGI) — no database, Redis only
+│   ├── api/                  # async views, SSE endpoint, URLconf
 │   ├── core/                 # admission controller, token bucket, backpressure — pure logic
 │   ├── adapters/             # Redis repository, JWT issuer — the IO edge
 │   ├── lua/                  # atomic scripts
 │   └── tests/
-├── booking_service/          # Django + DRF
+├── booking_service/          # Django + DRF + PostgreSQL
 ├── frontend/                 # index.html, ~200 lines of vanilla JS
 ├── infra/                    # Terraform, Packer, systemd units
 ├── loadtest/                 # k6 scripts and results
 └── docs/
-    ├── design.md             # the RFC-style design doc
+    ├── index.md              # the doc map — which file answers which question
+    ├── product-spec.md       # WHAT the waiting room does; journeys, edge cases, non-goals
+    ├── design.md             # WHY — the RFC-style design doc
+    ├── build-plan.md         # HOW — phases + the complete wire contract
     ├── decisions.md          # the running decision log
     ├── interview-prep.md     # auto-logged Q&A + concept explanations, for interview study
-    └── loadtest-report.md
+    ├── resume-claims.md      # every resume claim → its evidence → its status
+    └── loadtest-report.md    # every performance number, and the run that produced it
 ```
 
 `core/` must have **zero** imports from `adapters/`. That boundary is the whole point.
+
+**Which doc governs what:** `product-spec.md` governs behaviour, `design.md` governs design,
+`build-plan.md` governs the wire format. If they conflict: **behaviour > design > wire format**,
+and the loser gets corrected. `decisions.md` is the append-only record of *why*; `design.md`
+links to entries there rather than restating them, so an ADR never exists in two places.
+
+**No number reaches `resume-claims.md` or my CV until `loadtest-report.md` records the run that
+produced it.** That file is the evidence; the other is the claim.
 
 ---
 
@@ -267,8 +293,10 @@ token. Django validates the token and returns a fake booked ticket. Ugly HTML pa
 Docker, no metrics. Works for 1 user, then 10, then 1000 simulated.
 
 **v1 — make it real (weeks 4–9).** SSE replaces polling. All queue mutations move into Lua
-scripts. JWT admission tokens with 60s TTL, validated by Django middleware. Docker Compose.
-Deploy to AWS. k6 to 10K concurrent connections. Prometheus + Grafana dashboard.
+scripts. JWT admission tokens with 60s TTL, validated at the booking service by a **DRF
+authentication class** — *not* middleware; middleware was considered and rejected, see
+`docs/decisions.md` (2026-07-18, D1). Docker Compose. Deploy to AWS. k6 to 10K concurrent
+connections. Prometheus + Grafana dashboard.
 
 **v2 — interview-grade (weeks 10–18).** Pick three, not all: horizontal scaling behind Nginx
 (sticky vs stateless — write about it); Redis Sentinel failover during a live load test;
@@ -325,6 +353,35 @@ If a change would add recurring cost, tell me the monthly rupee figure before ma
 - Naive `GET → modify → SET` on queue state causes queue-jumping. This is the lesson of the
   project. When we hit it, do not just hand me the Lua fix — show me the broken interleaving
   first.
+
+### Django-on-ASGI traps (added 2026-08-02 with the framework decision)
+
+These are the price of choosing Django over Starlette. They are also the best interview
+material in the project, because each one has a specific mechanism behind it.
+
+- **One sync middleware poisons the whole chain.** Django adapts between sync and async at the
+  middleware boundary. If any middleware in `MIDDLEWARE` is not `async_capable`, Django wraps
+  the async view in `sync_to_async`, which runs it **in a thread from the ASGI thread pool**.
+  With SSE holding thousands of open connections that is thousands of parked threads, and the
+  pool is exhausted long before that. **The queue service ships with `MIDDLEWARE = []`** and
+  anything added to it must be proven async-capable. This is the single most likely way to
+  silently destroy the concurrency story.
+- **`GZipMiddleware` and `ConditionalGetMiddleware` buffer the response** — they must consume
+  the stream to compress or hash it. On an SSE endpoint that means the client receives nothing
+  until the generator ends, which for SSE is never. Same failure class as the Nginx buffering
+  trap above, one layer further in.
+- **Never import the ORM in the queue service.** It is sync-only; calling it from an async view
+  raises `SynchronousOnlyOperation`, and "fixing" that with `sync_to_async` just moves the
+  request onto a thread. The queue service has **no `DATABASES`**, by design, so the mistake
+  fails loudly at import rather than quietly at load.
+- **`StreamingHttpResponse` needs an *async* iterator** (Django 4.2+). Hand it a sync generator
+  and Django runs it in a thread — the trap above, wearing a different hat.
+- **`ALLOWED_HOSTS`, `DEBUG`, and the `SecurityMiddleware` header pass all cost per request.**
+  Trim ruthlessly on the position endpoint; measure before and after (Rule 7) rather than
+  assuming the trim helped.
+- **Django's per-request overhead is real and must be measured, not hand-waved.** When someone
+  asks "why not FastAPI", the honest answer is a number from `docs/loadtest-report.md`, not an
+  opinion. If that number ever says Django is the bottleneck, we say so in the decision log.
 
 ---
 
